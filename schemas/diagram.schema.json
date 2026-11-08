@@ -1,7 +1,7 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "Stepper diagram",
-  "description": "Boxes placed on the stepper's 5 × 9 grid, and the arrows between them.",
+  "description": "Boxes placed on the stepper's 8 × 12 grid, and the arrows between them.",
   "type": "object",
   "required": ["boxes"],
   "additionalProperties": false,
@@ -31,25 +31,25 @@
           "row": {
             "type": "integer",
             "minimum": 1,
-            "maximum": 5,
-            "description": "Grid row, from 1 (top) to 5."
+            "maximum": 8,
+            "description": "Grid row, from 1 (top) to 8."
           },
           "col": {
             "type": "integer",
             "minimum": 1,
-            "maximum": 9,
-            "description": "Grid column, from 1 (left) to 9."
+            "maximum": 12,
+            "description": "Grid column, from 1 (left) to 12."
           },
           "rowSpan": {
             "type": "integer",
             "minimum": 1,
-            "maximum": 5,
+            "maximum": 8,
             "description": "Number of rows the box covers. Default 1."
           },
           "colSpan": {
             "type": "integer",
             "minimum": 1,
-            "maximum": 9,
+            "maximum": 12,
             "description": "Number of columns the box covers. Default 1."
           }
         }

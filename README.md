@@ -1,6 +1,6 @@
 # Stepper
 
-A click-through, step-by-step diagram explainer for Astro sites. You describe the diagram and the steps in two JSON files; the `Stepper` component lays the boxes out on a 5 × 9 grid, draws the arrows between them, and reveals and highlights them step by step.
+A click-through, step-by-step diagram explainer for Astro sites. You describe the diagram and the steps in two JSON files; the `Stepper` component lays the boxes out on an 8 × 12 grid, draws the arrows between them, and reveals and highlights them step by step.
 
 ## Getting started
 
@@ -102,8 +102,8 @@ stepper/
 | --- | --- | --- |
 | `id` | yes | Unique name, used by arrows and in the steps file |
 | `label` | yes | Text in the box. Long labels wrap; `\n` forces a line break |
-| `row` | yes | 1 (top) to 5 |
-| `col` | yes | 1 (left) to 9 |
+| `row` | yes | 1 (top) to 8 |
+| `col` | yes | 1 (left) to 12 |
 | `rowSpan`, `colSpan` | no | Make a box cover more than one cell |
 
 **Arrows** run from the side of one box to the side of another. Boxes that share a row or column get a straight arrow; others get an L-shaped one.
@@ -165,7 +165,7 @@ If either file has a mistake (an id that doesn't exist, a box off the grid, two 
 | `start` | `1` | Step to open on |
 | `showGrid` | `false` | Draw the grid with row and column numbers |
 | `label` | | Overrides the diagram file's `label` |
-| `rows`, `cols` | `5`, `9` | Grid size. If you change these, update the maximums in `schemas/diagram.schema.json` too |
+| `rows`, `cols` | `8`, `12` | Grid size. If you change these, update the maximums in `schemas/diagram.schema.json` too |
 
 Colours and sizes are CSS custom properties, set like this:
 

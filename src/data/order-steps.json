@@ -1,29 +1,18 @@
 [
   {
-    "title": "The customer places an order",
-    "text": "Checkout on the website sends the order, with the delivery address and items, to the shop's order system.",
-    "show": ["customer", "shop", "customer->shop"],
-    "highlight": ["customer->shop", "shop"]
+    "title": "Supply Shock",
+    "text": "The Iran war disrupts oil flow in Hormuz, OPEC+ keeps quotas unchanged.",
+    "show": ["a_energy", "e_supdis", "a_energy->e_supdis"],
+    "highlight": ["a_energy->e_supdis", "e_supdis"]
   },
   {
-    "title": "Payment is authorised",
-    "text": "The shop asks the payment provider to reserve the amount on the customer's card. Nothing is charged until the order ships.",
-    "show": ["payment", "shop->payment", "payment->shop", "paid"]
+    "title": "Energy prices up, inflation up",
+    "text": "Brent goes to $104 quickly, inflation in the Eurozone tops 3%.",
+    "show": ["f_eng_inf", "e_supdis->f_eng_inf"]
   },
   {
-    "title": "The warehouse picks and packs",
-    "text": "The order appears on the warehouse pick list. Staff collect the items, pack them and print a shipping label.",
-    "show": ["warehouse", "shop->warehouse"]
-  },
-  {
-    "title": "The parcel goes to the carrier",
-    "text": "The carrier scans the label at pickup, and the shop emails the customer a tracking link.",
-    "show": ["carrier", "warehouse->carrier", "shop->customer"]
-  },
-  {
-    "title": "The parcel is delivered",
-    "text": "The carrier delivers to the customer's door. The loop is closed and the payment is captured.",
-    "show": ["carrier->customer", "delivered"],
-    "highlight": ["carrier->customer", "customer", "delivered"]
+    "title": "Effect on portfolio",
+    "text": "Cash earns more, bonds lose value. Because of the strong USD unchanged US holdings do better. Overall: negative, ",
+    "show": ["f_eng_inf->portfolio", "portfolio", "negative"]
   }
 ]

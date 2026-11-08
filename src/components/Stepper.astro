@@ -16,13 +16,14 @@
  *     "arrows": [{ "from": "customer", "to": "shop", "label": "Order" }]
  *   }
  *
- *   Boxes   row 1–5, col 1–9. Optional: rowSpan, colSpan.
+ *   Boxes   row 1–8, col 1–12. Optional: rowSpan, colSpan.
  *           Long labels wrap; "\n" forces a line break.
  *   Arrows  Run from the side of one box to the side of another. Boxes in the
  *           same row or column get a straight arrow, others an L-shaped one.
  *           The id defaults to "from->to" (e.g. "customer->shop").
  *           Optional:
- *             label      text beside the arrow
+ *             label      text beside the arrow; over 15 characters it
+ *                        splits over two lines ("\n" picks the break)
  *             dashed     true for a dashed line (e.g. an email or async message)
  *             offset     shift the arrow sideways, in grid units (100 = one
  *                        column); use 8 and -8 for two arrows between the
@@ -113,8 +114,8 @@ interface Props {
 const {
   diagram,
   steps,
-  rows = 5,
-  cols = 9,
+  rows = 8,
+  cols = 12,
   label,
   start = 1,
   showGrid = false,
@@ -130,7 +131,9 @@ const PAD_X = 8; // gap between a box and its cell edge
 const PAD_Y = 16;
 const BOX_FONT = 14;
 const BOX_LINE = 17;
-const LABEL_FONT = 12;
+const LABEL_FONT = BOX_FONT;
+const LABEL_LINE = BOX_LINE;
+const LABEL_WRAP = 15; // arrow labels longer than this split over two lines
 const HEAD_LEN = 9;
 const HEAD_HALF = 5.5;
 const CORNER = 10;
@@ -190,6 +193,19 @@ const rectOf = (b: Box): Rect => {
   const h = (b.rowSpan ?? 1) * CELL_H - 2 * PAD_Y;
   return { x, y, w, h, cx: x + w / 2, cy: y + h / 2 };
 };
+
+// Splits an arrow label longer than LABEL_WRAP characters into two lines, at
+// the space that makes the lines most even. "\n" forces the split instead.
+function splitArrowLabel(text: string): string[] {
+  if (text.includes("\n")) return text.split("\n");
+  if (text.length <= LABEL_WRAP) return [text];
+  let best = -1;
+  for (let i = 0; i < text.length; i++) {
+    if (text[i] !== " ") continue;
+    if (best < 0 || Math.abs(i - text.length / 2) < Math.abs(best - text.length / 2)) best = i;
+  }
+  return best < 0 ? [text] : [text.slice(0, best), text.slice(best + 1)];
+}
 
 function wrapLabel(text: string, maxWidth: number): string[] {
   const maxChars = Math.max(1, Math.floor(maxWidth / (BOX_FONT * 0.58)));
@@ -353,22 +369,25 @@ function drawArrow(a: Arrow) {
   const [s, e] = [pts[li], pts[li + 1]];
   const mx = (s[0] + e[0]) / 2;
   const my = (s[1] + e[1]) / 2;
+  // ly is the baseline of the first line
+  const labelLines = a.label ? splitArrowLabel(a.label) : [];
+  const extra = Math.max(0, labelLines.length - 1) * LABEL_LINE;
   let lx = mx;
   let ly = my;
   let anchor = "middle";
   if (s[1] === e[1]) {
-    ly = a.labelSide === "below" ? my + 7 + LABEL_FONT * 0.75 : my - 7;
+    ly = a.labelSide === "below" ? my + 7 + LABEL_FONT * 0.75 : my - 7 - extra;
   } else if (a.labelSide === "left") {
     lx = mx - 8;
-    ly = my + LABEL_FONT * 0.35;
+    ly = my + LABEL_FONT * 0.35 - extra / 2;
     anchor = "end";
   } else {
     lx = mx + 8;
-    ly = my + LABEL_FONT * 0.35;
+    ly = my + LABEL_FONT * 0.35 - extra / 2;
     anchor = "start";
   }
 
-  return { d, head, lx: r1(lx), ly: r1(ly), anchor };
+  return { d, head, lx: r1(lx), ly: r1(ly), anchor, labelLines };
 }
 
 // ── Steps: when each box, arrow and badge is shown, hidden and highlighted ──
@@ -524,7 +543,11 @@ const rootStyle = [
                 <polygon class="pop" points={a.head} />
                 {a.label && (
                   <text class="pop" x={a.lx} y={a.ly} text-anchor={a.anchor}>
-                    {a.label}
+                    {a.labelLines.map((line, i) => (
+                      <tspan x={a.lx} dy={i === 0 ? 0 : LABEL_LINE}>
+                        {line}
+                      </tspan>
+                    ))}
                   </text>
                 )}
               </g>
@@ -824,8 +847,8 @@ const rootStyle = [
   }
   .arrow text {
     font-family: inherit;
-    font-size: 12px;
-    font-weight: 600;
+    font-size: 14px;
+    font-weight: 400;
     fill: var(--stepper-label);
     transition: fill var(--stepper-speed) ease;
   }

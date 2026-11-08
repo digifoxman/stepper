@@ -1,23 +1,17 @@
 {
   "label": "Diagram of an online order moving from the customer to the shop, the payment provider, the warehouse, the carrier and back to the customer.",
   "boxes": [
-    { "id": "customer", "label": "Customer", "row": 3, "col": 1 },
-    { "id": "payment", "label": "Payment provider", "row": 1, "col": 5 },
-    { "id": "shop", "label": "Online shop", "row": 3, "col": 5 },
-    { "id": "warehouse", "label": "Warehouse", "row": 3, "col": 8, "colSpan": 2 },
-    { "id": "carrier", "label": "Carrier", "row": 5, "col": 8, "colSpan": 2 }
+    { "id": "a_energy", "label": "Energy Producers and OPEC+", "row": 1, "col": 1, "colSpan": 2},
+    { "id": "e_supdis", "label": "Supply Disruption", "row": 1, "col": 5 },
+    { "id": "f_eng_inf", "label": "Energy and inflation", "row": 1, "col": 8 },
+    { "id": "portfolio", "label": "Portofolio", "row": 2, "col": 10, "colSpan": 2}
   ],
   "arrows": [
-    { "from": "customer", "to": "shop", "label": "Order", "offset": -8 },
-    { "from": "shop", "to": "customer", "label": "Tracking link", "offset": 8, "labelSide": "below", "dashed": true },
-    { "from": "shop", "to": "payment", "label": "Authorise", "offset": -8, "labelSide": "left" },
-    { "from": "payment", "to": "shop", "label": "Approved", "offset": 8 },
-    { "from": "shop", "to": "warehouse", "label": "Pick list" },
-    { "from": "warehouse", "to": "carrier", "label": "Hand-over" },
-    { "from": "carrier", "to": "customer", "label": "Delivery" }
+    { "from": "a_energy", "to": "e_supdis", "label": "Iran War and Unchanged Quotas", "offset": 8 },
+    { "from": "e_supdis", "to": "f_eng_inf", "label": "Energy much more expensive", "offset": 8, "dashed": true },
+    { "from": "f_eng_inf", "to": "portfolio", "label": "Negative", "offset": 8, "labelSide": "below", "dashed": true }
   ],
   "badges": [
-    { "id": "paid", "box": "shop", "label": "✓ Paid", "position": "bottom-right" },
-    { "id": "delivered", "box": "customer", "label": "✓ Delivered" }
+    { "id": "negative", "box": "portfolio", "label": "Negative", "position": "bottom-right" }
   ]
 }
