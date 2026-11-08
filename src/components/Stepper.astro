@@ -1,0 +1,1051 @@
+---
+/**
+ * Stepper — a click-through, step-by-step diagram explainer drawn on a grid.
+ *
+ *   ---
+ *   import Stepper from "../components/Stepper.astro";
+ *   import diagram from "../data/order-diagram.json";
+ *   import steps from "../data/order-steps.json";
+ *   ---
+ *   <Stepper diagram={diagram} steps={steps} />
+ *
+ * ── diagram.json ─────────────────────────────────────────────────────────
+ *   {
+ *     "label":  "What the diagram shows (read out by screen readers)",
+ *     "boxes":  [{ "id": "shop", "label": "Online shop", "row": 3, "col": 4 }],
+ *     "arrows": [{ "from": "customer", "to": "shop", "label": "Order" }]
+ *   }
+ *
+ *   Boxes   row 1–5, col 1–9. Optional: rowSpan, colSpan.
+ *           Long labels wrap; "\n" forces a line break.
+ *   Arrows  Run from the side of one box to the side of another. Boxes in the
+ *           same row or column get a straight arrow, others an L-shaped one.
+ *           The id defaults to "from->to" (e.g. "customer->shop").
+ *           Optional:
+ *             label      text beside the arrow
+ *             dashed     true for a dashed line (e.g. an email or async message)
+ *             offset     shift the arrow sideways, in grid units (100 = one
+ *                        column); use 8 and -8 for two arrows between the
+ *                        same pair of boxes
+ *             bend       "horizontal" (default) or "vertical": which way an
+ *                        L-shaped arrow leaves its box
+ *             labelSide  "above" (default) or "below" for horizontal parts,
+ *                        "right" (default) or "left" for vertical parts
+ *   Badges  Small labels pinned to a corner of a box, e.g. "✓ Paid":
+ *             "badges": [{ "id": "paid", "box": "shop", "label": "✓ Paid" }]
+ *           Optional: position "top-right" (default), "top-left",
+ *           "bottom-right" or "bottom-left".
+ *
+ * ── steps.json ───────────────────────────────────────────────────────────
+ *   [{ "title": "…", "text": "…", "show": ["shop", "customer->shop"], "highlight": ["shop"] }]
+ *
+ *   show       ids that appear at this step and stay
+ *   highlight  ids drawn in the accent colour during this step
+ *              (default: the ids in "show")
+ *   hide       ids removed from this step on
+ *   Anything no step shows is visible from the start.
+ *
+ * Boxes, arrows and badges all share one set of ids, used by the steps file.
+ * Mistakes in either file (unknown ids, boxes off the grid or overlapping)
+ * stop the build with a message that says what to fix.
+ *
+ * Set showGrid to draw the numbered grid while you lay out a diagram.
+ * Without JavaScript, the finished diagram and every caption are shown.
+ */
+
+interface Box {
+  id: string;
+  label: string;
+  row: number;
+  col: number;
+  rowSpan?: number;
+  colSpan?: number;
+}
+
+interface Arrow {
+  id?: string;
+  from: string;
+  to: string;
+  label?: string;
+  dashed?: boolean;
+  offset?: number;
+  bend?: string;
+  labelSide?: string;
+}
+
+interface Badge {
+  id: string;
+  box: string;
+  label: string;
+  position?: string;
+}
+
+interface Diagram {
+  label?: string;
+  boxes: Box[];
+  arrows?: Arrow[];
+  badges?: Badge[];
+}
+
+interface Step {
+  title: string;
+  text: string;
+  show?: string[];
+  highlight?: string[];
+  hide?: string[];
+}
+
+interface Props {
+  diagram: Diagram;
+  steps: Step[];
+  rows?: number;
+  cols?: number;
+  /** Overrides diagram.label */
+  label?: string;
+  /** Step to open on (1-based) */
+  start?: number;
+  /** Draw the numbered grid — handy while laying out a diagram */
+  showGrid?: boolean;
+  /** Other attributes (class, id, style) go on the root element */
+  [attr: string]: unknown;
+}
+
+const {
+  diagram,
+  steps,
+  rows = 5,
+  cols = 9,
+  label,
+  start = 1,
+  showGrid = false,
+  class: userClass,
+  style: userStyle,
+  ...attrs
+} = Astro.props;
+
+// ── Geometry, in SVG units ──────────────────────────────────────────────
+const CELL_W = 100;
+const CELL_H = 88;
+const PAD_X = 8; // gap between a box and its cell edge
+const PAD_Y = 16;
+const BOX_FONT = 14;
+const BOX_LINE = 17;
+const LABEL_FONT = 12;
+const HEAD_LEN = 9;
+const HEAD_HALF = 5.5;
+const CORNER = 10;
+const BADGE_FONT = 11;
+const BADGE_H = 20;
+const BADGE_PAD = 8;
+const W = cols * CELL_W;
+const H = rows * CELL_H;
+
+// Reveal timings, used to sequence each step (arrow draws, then its box appears)
+const T_BOX = 0.3;
+const T_DRAW = 0.6;
+
+const fail = (message: string): never => {
+  throw new Error(`[Stepper] ${message}`);
+};
+const r1 = (n: number) => Math.round(n * 10) / 10;
+
+type Pt = [number, number];
+interface Rect {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  cx: number;
+  cy: number;
+}
+
+// ── Boxes ───────────────────────────────────────────────────────────────
+const boxById = new Map<string, Box>();
+const occupied = new Map<string, string>();
+
+for (const b of diagram.boxes ?? []) {
+  if (!b.id) fail(`A box is missing its "id".`);
+  if (boxById.has(b.id)) fail(`Two boxes have the id "${b.id}".`);
+  if (typeof b.label !== "string") fail(`Box "${b.id}" has no "label".`);
+  const rs = b.rowSpan ?? 1;
+  const cs = b.colSpan ?? 1;
+  const ints = [b.row, b.col, rs, cs].every((n) => Number.isInteger(n) && n >= 1);
+  if (!ints || b.row + rs - 1 > rows || b.col + cs - 1 > cols) {
+    fail(`Box "${b.id}" (row ${b.row}, col ${b.col}) doesn't fit on the ${rows} × ${cols} grid.`);
+  }
+  for (let r = b.row; r < b.row + rs; r++) {
+    for (let c = b.col; c < b.col + cs; c++) {
+      const other = occupied.get(`${r},${c}`);
+      if (other) fail(`Boxes "${other}" and "${b.id}" overlap at row ${r}, col ${c}.`);
+      occupied.set(`${r},${c}`, b.id);
+    }
+  }
+  boxById.set(b.id, b);
+}
+
+const rectOf = (b: Box): Rect => {
+  const x = (b.col - 1) * CELL_W + PAD_X;
+  const y = (b.row - 1) * CELL_H + PAD_Y;
+  const w = (b.colSpan ?? 1) * CELL_W - 2 * PAD_X;
+  const h = (b.rowSpan ?? 1) * CELL_H - 2 * PAD_Y;
+  return { x, y, w, h, cx: x + w / 2, cy: y + h / 2 };
+};
+
+function wrapLabel(text: string, maxWidth: number): string[] {
+  const maxChars = Math.max(1, Math.floor(maxWidth / (BOX_FONT * 0.58)));
+  return String(text)
+    .split("\n")
+    .flatMap((paragraph) => {
+      const lines: string[] = [];
+      let line = "";
+      for (const word of paragraph.split(/\s+/).filter(Boolean)) {
+        if (!line) line = word;
+        else if (`${line} ${word}`.length <= maxChars) line += ` ${word}`;
+        else {
+          lines.push(line);
+          line = word;
+        }
+      }
+      lines.push(line);
+      return lines;
+    });
+}
+
+// ── Arrows ──────────────────────────────────────────────────────────────
+const arrows = (diagram.arrows ?? []).map((a) => ({ ...a, id: a.id ?? `${a.from}->${a.to}` }));
+const arrowById = new Map<string, (typeof arrows)[number]>();
+
+for (const a of arrows) {
+  for (const end of [a.from, a.to]) {
+    if (!boxById.has(end)) fail(`Arrow "${a.id}" points to "${end}", but there's no box with that id.`);
+  }
+  if (a.from === a.to) fail(`Arrow "${a.id}" starts and ends at the same box.`);
+  if (boxById.has(a.id) || arrowById.has(a.id)) {
+    fail(`The id "${a.id}" is used twice. Give one of the arrows its own "id".`);
+  }
+  if (a.bend && a.bend !== "horizontal" && a.bend !== "vertical") {
+    fail(`Arrow "${a.id}" has bend "${a.bend}". Use "horizontal" or "vertical".`);
+  }
+  arrowById.set(a.id, a);
+}
+
+// ── Badges ──────────────────────────────────────────────────────────────
+const BADGE_POSITIONS = ["top-right", "top-left", "bottom-right", "bottom-left"];
+const badgeById = new Map<string, Badge>();
+
+for (const bg of diagram.badges ?? []) {
+  if (!bg.id) fail(`A badge is missing its "id".`);
+  if (boxById.has(bg.id) || arrowById.has(bg.id) || badgeById.has(bg.id)) {
+    fail(`The id "${bg.id}" is used twice. Badges need an id of their own.`);
+  }
+  if (!boxById.has(bg.box)) fail(`Badge "${bg.id}" is pinned to "${bg.box}", but there's no box with that id.`);
+  if (typeof bg.label !== "string" || !bg.label) fail(`Badge "${bg.id}" has no "label".`);
+  if (bg.position && !BADGE_POSITIONS.includes(bg.position)) {
+    fail(`Badge "${bg.id}" has position "${bg.position}". Use one of: ${BADGE_POSITIONS.join(", ")}.`);
+  }
+  badgeById.set(bg.id, bg);
+}
+
+/** A badge sits centred on its box's corner, kept inside the diagram */
+function placeBadge(bg: Badge) {
+  const r = rectOf(boxById.get(bg.box)!);
+  const pos = bg.position ?? "top-right";
+  const w = Math.round([...bg.label].length * BADGE_FONT * 0.62 + 2 * BADGE_PAD);
+  const cornerX = pos.endsWith("right") ? r.x + r.w : r.x;
+  const cornerY = pos.startsWith("top") ? r.y : r.y + r.h;
+  const x = Math.min(Math.max(cornerX - w / 2, 2), W - w - 2);
+  const y = Math.min(Math.max(cornerY - BADGE_H / 2, 2), H - BADGE_H - 2);
+  return { id: bg.id, label: bg.label, x: r1(x), y: r1(y), w, cx: r1(x + w / 2), cy: r1(y + BADGE_H / 2) };
+}
+
+/** Points along the arrow, from the edge of one box to the edge of the other */
+function route(a: Arrow): Pt[] {
+  const A = rectOf(boxById.get(a.from)!);
+  const B = rectOf(boxById.get(a.to)!);
+  const off = a.offset ?? 0;
+  const vOverlap = Math.min(A.y + A.h, B.y + B.h) - Math.max(A.y, B.y);
+  const hOverlap = Math.min(A.x + A.w, B.x + B.w) - Math.max(A.x, B.x);
+  const right = B.cx > A.cx;
+  const down = B.cy > A.cy;
+
+  if (vOverlap > 0) {
+    // Side by side: straight horizontal arrow
+    const y = (Math.max(A.y, B.y) + Math.min(A.y + A.h, B.y + B.h)) / 2 + off;
+    return [
+      [right ? A.x + A.w : A.x, y],
+      [right ? B.x : B.x + B.w, y],
+    ];
+  }
+  if (hOverlap > 0) {
+    // Stacked: straight vertical arrow
+    const x = (Math.max(A.x, B.x) + Math.min(A.x + A.w, B.x + B.w)) / 2 + off;
+    return [
+      [x, down ? A.y + A.h : A.y],
+      [x, down ? B.y : B.y + B.h],
+    ];
+  }
+  // Diagonal: L-shaped arrow
+  if (a.bend === "vertical") {
+    const x = A.cx + off;
+    const y = B.cy + off;
+    return [
+      [x, down ? A.y + A.h : A.y],
+      [x, y],
+      [right ? B.x : B.x + B.w, y],
+    ];
+  }
+  const y = A.cy + off;
+  const x = B.cx + off;
+  return [
+    [right ? A.x + A.w : A.x, y],
+    [x, y],
+    [x, down ? B.y : B.y + B.h],
+  ];
+}
+
+function drawArrow(a: Arrow) {
+  const pts = route(a);
+  const n = pts.length;
+  const [px, py] = pts[n - 2];
+  const [ex, ey] = pts[n - 1];
+  const len = Math.hypot(ex - px, ey - py) || 1;
+  const ux = (ex - px) / len;
+  const uy = (ey - py) / len;
+
+  // Arrowhead
+  const tip: Pt = [ex - ux, ey - uy];
+  const base: Pt = [tip[0] - ux * HEAD_LEN, tip[1] - uy * HEAD_LEN];
+  const head = [
+    tip,
+    [base[0] - uy * HEAD_HALF, base[1] + ux * HEAD_HALF],
+    [base[0] + uy * HEAD_HALF, base[1] - ux * HEAD_HALF],
+  ]
+    .map(([x, y]) => `${r1(x)},${r1(y)}`)
+    .join(" ");
+
+  // Line, ending just inside the arrowhead, with rounded corners
+  const line = pts.map((p) => [...p] as Pt);
+  line[n - 1] = [base[0] + ux * 2, base[1] + uy * 2];
+  let d = `M${r1(line[0][0])} ${r1(line[0][1])}`;
+  for (let i = 1; i < n - 1; i++) {
+    const [ax, ay] = line[i - 1];
+    const [cx, cy] = line[i];
+    const [bx, by] = line[i + 1];
+    const inLen = Math.hypot(cx - ax, cy - ay);
+    const outLen = Math.hypot(bx - cx, by - cy);
+    const r = Math.min(CORNER, inLen / 2, outLen / 2);
+    const p1: Pt = [cx - ((cx - ax) / inLen) * r, cy - ((cy - ay) / inLen) * r];
+    const p2: Pt = [cx + ((bx - cx) / outLen) * r, cy + ((by - cy) / outLen) * r];
+    d += ` L${r1(p1[0])} ${r1(p1[1])} Q${r1(cx)} ${r1(cy)} ${r1(p2[0])} ${r1(p2[1])}`;
+  }
+  d += ` L${r1(line[n - 1][0])} ${r1(line[n - 1][1])}`;
+
+  // Label beside the longest part of the arrow
+  let li = 0;
+  let longest = -1;
+  for (let i = 0; i < n - 1; i++) {
+    const l = Math.hypot(pts[i + 1][0] - pts[i][0], pts[i + 1][1] - pts[i][1]);
+    if (l > longest) {
+      longest = l;
+      li = i;
+    }
+  }
+  const [s, e] = [pts[li], pts[li + 1]];
+  const mx = (s[0] + e[0]) / 2;
+  const my = (s[1] + e[1]) / 2;
+  let lx = mx;
+  let ly = my;
+  let anchor = "middle";
+  if (s[1] === e[1]) {
+    ly = a.labelSide === "below" ? my + 7 + LABEL_FONT * 0.75 : my - 7;
+  } else if (a.labelSide === "left") {
+    lx = mx - 8;
+    ly = my + LABEL_FONT * 0.35;
+    anchor = "end";
+  } else {
+    lx = mx + 8;
+    ly = my + LABEL_FONT * 0.35;
+    anchor = "start";
+  }
+
+  return { d, head, lx: r1(lx), ly: r1(ly), anchor };
+}
+
+// ── Steps: when each box, arrow and badge is shown, hidden and highlighted ──
+interface Timing {
+  from?: number;
+  until?: number;
+  hl: number[];
+  delay: number;
+}
+const timing = new Map<string, Timing>();
+for (const id of [...boxById.keys(), ...arrowById.keys(), ...badgeById.keys()]) {
+  timing.set(id, { hl: [], delay: 0 });
+}
+
+const check = (n: number, field: string, id: string) => {
+  if (!timing.has(id)) {
+    fail(
+      `Step ${n} ${field} "${id}", but there's no box, arrow or badge with that id. ` +
+        `Arrows without their own id are called "from->to", e.g. "customer->shop".`,
+    );
+  }
+  return timing.get(id)!;
+};
+const visibleAt = (t: Timing, n: number) =>
+  (t.from === undefined || t.from <= n) && (t.until === undefined || n <= t.until);
+
+if (!Array.isArray(steps) || steps.length === 0) fail(`The steps file needs at least one step.`);
+
+steps.forEach((s, i) => {
+  const n = i + 1;
+  if (!s.title) fail(`Step ${n} has no "title".`);
+  for (const id of s.show ?? []) {
+    const t = check(n, "shows", id);
+    if (t.from !== undefined) fail(`"${id}" is shown at step ${t.from} and again at step ${n}.`);
+    t.from = n;
+  }
+  for (const id of s.hide ?? []) {
+    const t = check(n, "hides", id);
+    if (t.from !== undefined && t.from >= n) fail(`Step ${n} hides "${id}" before it has been shown.`);
+    if (t.until !== undefined) fail(`"${id}" is hidden twice.`);
+    t.until = n - 1;
+  }
+});
+
+steps.forEach((s, i) => {
+  const n = i + 1;
+  for (const id of s.highlight ?? s.show ?? []) {
+    const t = check(n, "highlights", id);
+    if (!visibleAt(t, n)) fail(`Step ${n} highlights "${id}", which isn't on screen at that step.`);
+    t.hl.push(n);
+  }
+
+  // Sequence what appears at this step: an arrow draws once the box it leaves
+  // from is on screen, a box appears once the arrows pointing to it have drawn,
+  // and a badge pops up once its box is there and those arrows have arrived.
+  const isNew = new Set(s.show ?? []);
+  const startAt = new Map<string, number>();
+  const visiting = new Set<string>();
+  const readyAt = (id: string): number =>
+    isNew.has(id) ? startOf(id) + (arrowById.has(id) ? T_DRAW : T_BOX) : 0;
+  const arrivalsAt = (boxId: string) => {
+    let t = 0;
+    for (const a of arrows) if (a.to === boxId && isNew.has(a.id)) t = Math.max(t, readyAt(a.id));
+    return t;
+  };
+  const startOf = (id: string): number => {
+    if (startAt.has(id)) return startAt.get(id)!;
+    if (visiting.has(id)) return 0;
+    visiting.add(id);
+    let t = 0;
+    if (arrowById.has(id)) {
+      t = readyAt(arrowById.get(id)!.from);
+    } else if (badgeById.has(id)) {
+      const box = badgeById.get(id)!.box;
+      t = Math.max(readyAt(box), arrivalsAt(box));
+    } else {
+      t = arrivalsAt(id);
+    }
+    startAt.set(id, t);
+    return t;
+  };
+  for (const id of isNew) timing.get(id)!.delay = Math.round(startOf(id) * 100) / 100;
+});
+
+// ── Render data ─────────────────────────────────────────────────────────
+const stateAttrs = (id: string) => {
+  const t = timing.get(id)!;
+  return {
+    "data-from": t.from,
+    "data-until": t.until,
+    "data-hl": t.hl.length ? t.hl.join(" ") : undefined,
+    style: t.delay ? `--delay:${t.delay}s` : undefined,
+  };
+};
+
+const boxShapes = [...boxById.values()].map((b) => {
+  const rect = rectOf(b);
+  const lines = wrapLabel(b.label, rect.w - 12);
+  const firstY = rect.cy - ((lines.length - 1) * BOX_LINE) / 2;
+  return { id: b.id, rect, lines, firstY };
+});
+const arrowShapes = arrows.map((a) => ({ ...a, ...drawArrow(a) }));
+const badgeShapes = [...badgeById.values()].map(placeBadge);
+
+const total = steps.length;
+const ariaLabel =
+  label ??
+  diagram.label ??
+  `Diagram with ${boxById.size} boxes: ${[...boxById.values()].map((b) => b.label.replace(/\n/g, " ")).join(", ")}.`;
+const rootStyle = [
+  `--stepper-draw:${T_DRAW}s`,
+  `--stepper-pop:${T_BOX}s`,
+  typeof userStyle === "string" ? userStyle : "",
+]
+  .filter(Boolean)
+  .join(";");
+---
+
+<step-explainer
+  class:list={["stepper", userClass]}
+  data-total={total}
+  data-start={start}
+  style={rootStyle}
+  {...attrs}
+>
+  <figure>
+    <div class="scroller">
+      <div class="diagram" role="img" aria-label={ariaLabel}>
+        <svg viewBox={`0 0 ${W} ${H}`} xmlns="http://www.w3.org/2000/svg">
+          {
+            showGrid && (
+              <g class="grid">
+                {Array.from({ length: rows * cols }, (_, i) => {
+                  const r = Math.floor(i / cols) + 1;
+                  const c = (i % cols) + 1;
+                  return (
+                    <>
+                      <rect x={(c - 1) * CELL_W} y={(r - 1) * CELL_H} width={CELL_W} height={CELL_H} />
+                      <text x={(c - 1) * CELL_W + 4} y={(r - 1) * CELL_H + 11}>
+                        {r},{c}
+                      </text>
+                    </>
+                  );
+                })}
+              </g>
+            )
+          }
+
+          {
+            arrowShapes.map((a) => (
+              <g class:list={["arrow", { dashed: a.dashed }]} data-id={a.id} {...stateAttrs(a.id)}>
+                <path class:list={[{ draw: !a.dashed }]} d={a.d} pathLength={a.dashed ? undefined : 1} />
+                <polygon class="pop" points={a.head} />
+                {a.label && (
+                  <text class="pop" x={a.lx} y={a.ly} text-anchor={a.anchor}>
+                    {a.label}
+                  </text>
+                )}
+              </g>
+            ))
+          }
+
+          {
+            boxShapes.map((b) => (
+              <g class="box" data-id={b.id} {...stateAttrs(b.id)}>
+                <rect x={b.rect.x} y={b.rect.y} width={b.rect.w} height={b.rect.h} rx="8" />
+                <text text-anchor="middle">
+                  {b.lines.map((line, i) => (
+                    <tspan x={b.rect.cx} y={r1(b.firstY + i * BOX_LINE)} dominant-baseline="central">
+                      {line}
+                    </tspan>
+                  ))}
+                </text>
+              </g>
+            ))
+          }
+
+          {
+            badgeShapes.map((bg) => (
+              <g class="badge" data-id={bg.id} {...stateAttrs(bg.id)}>
+                <rect x={bg.x} y={bg.y} width={bg.w} height={BADGE_H} rx={BADGE_H / 2} />
+                <text x={bg.cx} y={bg.cy} text-anchor="middle" dominant-baseline="central">
+                  {bg.label}
+                </text>
+              </g>
+            ))
+          }
+        </svg>
+      </div>
+    </div>
+
+    <figcaption>
+      <ol class="captions">
+        {
+          steps.map((step, i) => (
+            <li data-index={i + 1}>
+              <p class="eyebrow">
+                Step {i + 1} of {total}
+              </p>
+              <p class="title">{step.title}</p>
+              <p class="text">{step.text}</p>
+            </li>
+          ))
+        }
+      </ol>
+    </figcaption>
+  </figure>
+
+  <div class="controls" hidden>
+    <button type="button" class="prev">
+      <span aria-hidden="true">←</span> Previous
+    </button>
+    <ol class="dots">
+      {
+        steps.map((step, i) => (
+          <li>
+            <button type="button" data-goto={i + 1} aria-label={`Step ${i + 1}: ${step.title}`} />
+          </li>
+        ))
+      }
+    </ol>
+    <button type="button" class="next">
+      <span class="next-label">Next</span> <span aria-hidden="true">→</span>
+    </button>
+  </div>
+
+  <p class="sr-only" aria-live="polite"></p>
+</step-explainer>
+
+<script>
+  class StepExplainer extends HTMLElement {
+    private step = 1;
+    private total = 1;
+    private abort?: AbortController;
+
+    connectedCallback() {
+      // Runs on first load and again whenever Astro's view transitions swap
+      // this element into the page, so no astro:page-load listener is needed.
+      this.abort = new AbortController();
+      const { signal } = this.abort;
+      this.total = Number(this.dataset.total) || 1;
+
+      this.q(".prev")?.addEventListener("click", () => this.go(this.step - 1), { signal });
+      this.q(".next")?.addEventListener(
+        "click",
+        () => this.go(this.step < this.total ? this.step + 1 : 1),
+        { signal },
+      );
+      this.querySelectorAll<HTMLButtonElement>("[data-goto]").forEach((btn) =>
+        btn.addEventListener("click", () => this.go(Number(btn.dataset.goto)), { signal }),
+      );
+      this.addEventListener(
+        "keydown",
+        (e) => {
+          const keys: Record<string, number> = {
+            ArrowRight: this.step + 1,
+            ArrowLeft: this.step - 1,
+            Home: 1,
+            End: this.total,
+          };
+          if (e.key in keys) {
+            e.preventDefault();
+            this.go(keys[e.key]);
+          }
+        },
+        { signal },
+      );
+
+      // Switch from the no-JS "show everything" view to step mode,
+      // jumping straight to the start state instead of animating to it.
+      this.setAttribute("data-instant", "");
+      this.setAttribute("data-ready", "");
+      this.q<HTMLElement>(".controls")!.hidden = false;
+      this.go(Number(this.dataset.start) || 1, false);
+      requestAnimationFrame(() =>
+        requestAnimationFrame(() => this.removeAttribute("data-instant")),
+      );
+    }
+
+    disconnectedCallback() {
+      this.abort?.abort();
+    }
+
+    go(n: number, announce = true) {
+      const step = Math.min(Math.max(n, 1), this.total);
+      this.step = step;
+      this.dataset.step = String(step);
+
+      // Boxes and arrows
+      const highlighted: Element[] = [];
+      this.querySelectorAll<SVGElement>(".diagram [data-id]").forEach((el) => {
+        const from = el.dataset.from ? Number(el.dataset.from) : 0;
+        const until = el.dataset.until ? Number(el.dataset.until) : Infinity;
+        const visible = step >= from && step <= until;
+        const hl = visible && (el.dataset.hl ?? "").split(" ").includes(String(step));
+        el.classList.toggle("is-visible", visible);
+        el.classList.toggle("is-highlight", hl);
+        if (hl) highlighted.push(el);
+      });
+      this.scrollIntoFocus(highlighted, announce);
+
+      // Captions
+      this.querySelectorAll<HTMLLIElement>(".captions > li").forEach((li) => {
+        const isCurrent = Number(li.dataset.index) === step;
+        li.classList.toggle("is-current", isCurrent);
+        li.toggleAttribute("aria-hidden", !isCurrent);
+      });
+
+      // Controls
+      this.querySelectorAll<HTMLButtonElement>("[data-goto]").forEach((btn) => {
+        if (Number(btn.dataset.goto) === step) btn.setAttribute("aria-current", "step");
+        else btn.removeAttribute("aria-current");
+      });
+      const prev = this.q<HTMLButtonElement>(".prev")!;
+      const next = this.q<HTMLButtonElement>(".next")!;
+      if (step === 1 && document.activeElement === prev) next.focus();
+      prev.disabled = step === 1;
+      this.q(".next-label")!.textContent = step === this.total ? "Start over" : "Next";
+
+      if (announce) {
+        const li = this.q(`.captions > li[data-index="${step}"]`);
+        const title = li?.querySelector(".title")?.textContent ?? "";
+        const text = li?.querySelector(".text")?.textContent ?? "";
+        this.q(".sr-only")!.textContent = `Step ${step} of ${this.total}: ${title}. ${text}`;
+      }
+    }
+
+    /** On narrow screens the diagram scrolls sideways: bring this step's highlights into view */
+    private scrollIntoFocus(els: Element[], smooth: boolean) {
+      const scroller = this.q<HTMLElement>(".scroller");
+      if (!scroller || !els.length || scroller.scrollWidth <= scroller.clientWidth + 1) return;
+      const box = scroller.getBoundingClientRect();
+      let left = Infinity;
+      let right = -Infinity;
+      for (const el of els) {
+        const r = el.getBoundingClientRect();
+        left = Math.min(left, r.left);
+        right = Math.max(right, r.right);
+      }
+      const centre = (left + right) / 2 - box.left + scroller.scrollLeft;
+      const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+      scroller.scrollTo({
+        left: centre - scroller.clientWidth / 2,
+        behavior: smooth && !reduce ? "smooth" : "auto",
+      });
+    }
+
+    private q<T extends Element = Element>(selector: string) {
+      return this.querySelector<T>(selector);
+    }
+  }
+
+  if (!customElements.get("step-explainer")) {
+    customElements.define("step-explainer", StepExplainer);
+  }
+</script>
+
+<style>
+  .stepper {
+    --stepper-accent: #2557d6;
+    --stepper-accent-soft: #e9effc;
+    --stepper-text: #172033;
+    --stepper-label: #5b6578;
+    --stepper-muted: #a2abba;
+    --stepper-line: #c9d0dc;
+    --stepper-surface: #ffffff;
+    --stepper-grid: #e1e5ec;
+    --stepper-speed: 0.4s;
+    --stepper-min-width: 720px;
+
+    display: block;
+    color: var(--stepper-text);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    .stepper {
+      --stepper-accent: #7aa2ff;
+      --stepper-accent-soft: #1e2a47;
+      --stepper-text: #e6e9f0;
+      --stepper-label: #9ea7b8;
+      --stepper-muted: #5f687a;
+      --stepper-line: #3a4252;
+      --stepper-surface: #1b2130;
+      --stepper-grid: #283040;
+    }
+  }
+
+  figure {
+    margin: 0;
+  }
+
+  /* On screens narrower than the diagram, it scrolls sideways */
+  .scroller {
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+  }
+  svg {
+    display: block;
+    width: 100%;
+    min-width: var(--stepper-min-width);
+    height: auto;
+    overflow: visible;
+  }
+
+  /* ---------- Diagram ---------- */
+
+  .grid rect {
+    fill: none;
+    stroke: var(--stepper-grid);
+    stroke-dasharray: 3 3;
+  }
+  .grid text {
+    font-size: 9px;
+    fill: var(--stepper-label);
+  }
+
+  .box rect {
+    fill: var(--stepper-surface);
+    stroke: var(--stepper-line);
+    stroke-width: 1.5;
+    transition:
+      fill var(--stepper-speed) ease,
+      stroke var(--stepper-speed) ease;
+  }
+  .box text {
+    font-family: inherit;
+    font-size: 14px;
+    font-weight: 600;
+    fill: var(--stepper-text);
+  }
+  .box.is-highlight rect {
+    fill: var(--stepper-accent-soft);
+    stroke: var(--stepper-accent);
+    stroke-width: 2.5;
+  }
+
+  .arrow {
+    color: var(--stepper-muted);
+    transition: color var(--stepper-speed) ease;
+  }
+  .arrow path {
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 2;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+  .arrow.dashed path {
+    stroke-dasharray: 5 5;
+  }
+  .arrow polygon {
+    fill: currentColor;
+  }
+  .arrow text {
+    font-family: inherit;
+    font-size: 12px;
+    font-weight: 600;
+    fill: var(--stepper-label);
+    transition: fill var(--stepper-speed) ease;
+  }
+  .arrow.is-highlight {
+    color: var(--stepper-accent);
+  }
+  .arrow.is-highlight text {
+    fill: var(--stepper-accent);
+  }
+
+  .badge rect {
+    fill: var(--stepper-label);
+    transition: fill var(--stepper-speed) ease;
+  }
+  .badge text {
+    font-family: inherit;
+    font-size: 11px;
+    font-weight: 700;
+    fill: var(--stepper-surface);
+  }
+  .badge.is-highlight rect {
+    fill: var(--stepper-accent);
+  }
+
+  /* ---------- Step mode (only once the script has run) ---------- */
+
+  .stepper[data-ready] :is(.box, .badge, .arrow) {
+    transition:
+      opacity var(--stepper-pop) ease,
+      transform var(--stepper-pop) ease,
+      color var(--stepper-speed) ease;
+  }
+  .stepper[data-ready] :is(.box, .badge) {
+    transform-box: fill-box;
+    transform-origin: center;
+  }
+  .stepper[data-ready] .badge {
+    /* a little overshoot, so badges pop rather than fade */
+    transition-timing-function: ease, cubic-bezier(0.34, 1.56, 0.64, 1), ease;
+  }
+  .stepper[data-ready] :is(.box, .badge, .arrow).is-visible {
+    transition-delay: var(--delay, 0s), var(--delay, 0s), 0s;
+  }
+  .stepper[data-ready] :is(.box, .badge, .arrow):not(.is-visible) {
+    opacity: 0;
+  }
+  .stepper[data-ready] .box:not(.is-visible) {
+    transform: scale(0.92);
+  }
+  .stepper[data-ready] .badge:not(.is-visible) {
+    transform: scale(0.5);
+  }
+
+  /* Arrows draw themselves in, then their head and label appear */
+  .stepper[data-ready] .arrow .draw {
+    stroke-dasharray: 1 1;
+    stroke-dashoffset: 0;
+    transition: stroke-dashoffset var(--stepper-draw) ease-in-out var(--delay, 0s);
+  }
+  .stepper[data-ready] .arrow:not(.is-visible) .draw {
+    stroke-dashoffset: 1;
+    transition-delay: 0s;
+  }
+  .stepper[data-ready] .arrow .pop {
+    transition:
+      opacity 0.2s ease calc(var(--delay, 0s) + var(--stepper-draw) * 0.8),
+      fill var(--stepper-speed) ease;
+  }
+  .stepper[data-ready] .arrow.dashed .pop {
+    transition-delay: var(--delay, 0s), 0s;
+  }
+  .stepper[data-ready] .arrow:not(.is-visible) .pop {
+    opacity: 0;
+    transition-delay: 0s;
+  }
+
+  /* Without JavaScript, things a step hides would clutter the finished diagram */
+  .stepper:not([data-ready]) [data-until] {
+    display: none;
+  }
+
+  /* ---------- Captions ---------- */
+
+  .captions {
+    list-style: none;
+    margin: 1.25rem 0 0;
+    padding: 0;
+    display: grid;
+    gap: 1rem;
+    max-width: 40rem;
+  }
+  /* Stacked in one cell so the caption area never changes height */
+  .stepper[data-ready] .captions > li {
+    grid-area: 1 / 1;
+    opacity: 0;
+    visibility: hidden;
+    transition:
+      opacity 0.3s ease,
+      visibility 0s linear 0.3s;
+  }
+  .stepper[data-ready] .captions > li.is-current {
+    opacity: 1;
+    visibility: visible;
+    transition: opacity 0.3s ease 0.1s;
+  }
+  .captions p {
+    margin: 0;
+  }
+  .eyebrow {
+    font-size: 0.8125rem;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--stepper-accent);
+  }
+  .title {
+    font-size: 1.125rem;
+    font-weight: 650;
+    margin-top: 0.15rem !important;
+  }
+  .text {
+    margin-top: 0.25rem !important;
+    line-height: 1.55;
+  }
+
+  /* ---------- Controls ---------- */
+
+  .controls {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    margin-top: 1.25rem;
+    max-width: 40rem;
+  }
+  .controls[hidden] {
+    display: none;
+  }
+  .prev,
+  .next {
+    font: inherit;
+    font-size: 0.9375rem;
+    font-weight: 600;
+    padding: 0.55rem 1rem;
+    border-radius: 999px;
+    border: 1px solid var(--stepper-line);
+    background: var(--stepper-surface);
+    color: var(--stepper-text);
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .next {
+    background: var(--stepper-accent);
+    border-color: var(--stepper-accent);
+    color: var(--stepper-surface);
+  }
+  .prev:disabled {
+    opacity: 0.4;
+    cursor: default;
+  }
+  .prev:focus-visible,
+  .next:focus-visible,
+  .dots button:focus-visible {
+    outline: 2px solid var(--stepper-accent);
+    outline-offset: 2px;
+  }
+  .dots {
+    list-style: none;
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    margin: 0;
+    padding: 0;
+  }
+  .dots button {
+    width: 24px;
+    height: 24px;
+    padding: 0;
+    border: 0;
+    border-radius: 50%;
+    background: none;
+    cursor: pointer;
+    display: grid;
+    place-items: center;
+  }
+  .dots button::before {
+    content: "";
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--stepper-line);
+    transition:
+      background var(--stepper-speed),
+      transform var(--stepper-speed);
+  }
+  .dots button[aria-current="step"]::before {
+    background: var(--stepper-accent);
+    transform: scale(1.35);
+  }
+
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+
+  /* No animation on first paint, or for people who prefer reduced motion */
+  .stepper[data-instant] *,
+  .stepper[data-instant] *::before {
+    transition: none !important;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .stepper *,
+    .stepper *::before {
+      transition-duration: 0s !important;
+      transition-delay: 0s !important;
+    }
+  }
+</style>

@@ -1,0 +1,17 @@
+---
+// A working view for laying out diagrams: shows the grid with row and column
+// numbers, opened at the last step so every box and arrow is on screen.
+import Base from "../layouts/Base.astro";
+import Stepper from "../components/Stepper.astro";
+import diagram from "../data/order-diagram.json";
+import steps from "../data/order-steps.json";
+---
+
+<Base title="Layout view">
+  <h1>Layout view</h1>
+  <p class="intro">
+    The order diagram on its grid. Each cell shows its row and column in the corner.
+  </p>
+
+  <Stepper diagram={diagram} steps={steps} showGrid start={steps.length} />
+</Base>

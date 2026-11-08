@@ -1,0 +1,130 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Stepper diagram",
+  "description": "Boxes placed on the stepper's 5 × 9 grid, and the arrows between them.",
+  "type": "object",
+  "required": ["boxes"],
+  "additionalProperties": false,
+  "properties": {
+    "$schema": { "type": "string" },
+    "label": {
+      "type": "string",
+      "description": "What the diagram shows, read out by screen readers."
+    },
+    "boxes": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["id", "label", "row", "col"],
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Unique name for the box, used in arrows and in the steps file."
+          },
+          "label": {
+            "type": "string",
+            "description": "Text in the box. Long labels wrap; \\n forces a line break."
+          },
+          "row": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 5,
+            "description": "Grid row, from 1 (top) to 5."
+          },
+          "col": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9,
+            "description": "Grid column, from 1 (left) to 9."
+          },
+          "rowSpan": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 5,
+            "description": "Number of rows the box covers. Default 1."
+          },
+          "colSpan": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9,
+            "description": "Number of columns the box covers. Default 1."
+          }
+        }
+      }
+    },
+    "arrows": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["from", "to"],
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Name used in the steps file. Default: \"from->to\", e.g. \"customer->shop\"."
+          },
+          "from": {
+            "type": "string",
+            "description": "id of the box the arrow starts at."
+          },
+          "to": {
+            "type": "string",
+            "description": "id of the box the arrow points to."
+          },
+          "label": {
+            "type": "string",
+            "description": "Text beside the arrow."
+          },
+          "dashed": {
+            "type": "boolean",
+            "description": "Draw a dashed line, e.g. for an email or other indirect message."
+          },
+          "offset": {
+            "type": "number",
+            "description": "Shift the arrow sideways. One column is 100 units; use 8 and -8 for two arrows between the same boxes."
+          },
+          "bend": {
+            "enum": ["horizontal", "vertical"],
+            "description": "Which way an L-shaped arrow leaves its box. Default \"horizontal\"."
+          },
+          "labelSide": {
+            "enum": ["above", "below", "left", "right"],
+            "description": "Where the label goes: \"above\" (default) or \"below\" a horizontal arrow, \"right\" (default) or \"left\" of a vertical one."
+          }
+        }
+      }
+    },
+    "badges": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "box", "label"],
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Unique name for the badge, used in the steps file."
+          },
+          "box": {
+            "type": "string",
+            "description": "id of the box the badge is pinned to."
+          },
+          "label": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Short text in the badge, e.g. \"✓ Paid\"."
+          },
+          "position": {
+            "enum": ["top-right", "top-left", "bottom-right", "bottom-left"],
+            "description": "Which corner of the box the badge sits on. Default \"top-right\"."
+          }
+        }
+      }
+    }
+  }
+}

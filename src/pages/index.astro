@@ -1,0 +1,13 @@
+---
+import Base from "../layouts/Base.astro";
+import Stepper from "../components/Stepper.astro";
+import diagram from "../data/order-diagram.json";
+import steps from "../data/order-steps.json";
+---
+
+<Base title="Order fulfilment explainer">
+  <h1>How an online order reaches your door</h1>
+  <p class="intro">Click through the five steps, or use the arrow keys.</p>
+
+  <Stepper diagram={diagram} steps={steps} />
+</Base>

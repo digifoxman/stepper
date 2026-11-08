@@ -1,0 +1,29 @@
+[
+  {
+    "title": "The customer places an order",
+    "text": "Checkout on the website sends the order, with the delivery address and items, to the shop's order system.",
+    "show": ["customer", "shop", "customer->shop"],
+    "highlight": ["customer->shop", "shop"]
+  },
+  {
+    "title": "Payment is authorised",
+    "text": "The shop asks the payment provider to reserve the amount on the customer's card. Nothing is charged until the order ships.",
+    "show": ["payment", "shop->payment", "payment->shop", "paid"]
+  },
+  {
+    "title": "The warehouse picks and packs",
+    "text": "The order appears on the warehouse pick list. Staff collect the items, pack them and print a shipping label.",
+    "show": ["warehouse", "shop->warehouse"]
+  },
+  {
+    "title": "The parcel goes to the carrier",
+    "text": "The carrier scans the label at pickup, and the shop emails the customer a tracking link.",
+    "show": ["carrier", "warehouse->carrier", "shop->customer"]
+  },
+  {
+    "title": "The parcel is delivered",
+    "text": "The carrier delivers to the customer's door. The loop is closed and the payment is captured.",
+    "show": ["carrier->customer", "delivered"],
+    "highlight": ["carrier->customer", "customer", "delivered"]
+  }
+]
